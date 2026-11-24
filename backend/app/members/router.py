@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_business_access, require_roles
+from app.audit.service import record_audit
+from app.auth.dependencies import get_business_access, get_current_user, require_roles
 from app.auth.models import User
 from app.auth.passwords import pwd_context
 from app.core.database import get_db
@@ -29,7 +30,13 @@ def _member_response(member: BusinessMember) -> MemberResponse:
         created_at=member.created_at,
     )
 
-
+def _member_snapshot(member: BusinessMember) -> dict:
+    # Sengaja tanpa email/password: hanya data yang relevan untuk jejak audit.
+    return {
+        "full_name": member.user.full_name,
+        "role": member.role,
+        "is_active": member.is_active,
+    }
 def _active_owner_count(db: Session, business_id: int) -> int:
     return (
         db.query(BusinessMember)
@@ -66,6 +73,7 @@ def create_member(
     business_id: int,
     payload: MemberCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     existing_user = db.query(User).filter(User.email == payload.email).first()
     if existing_user:
@@ -99,7 +107,18 @@ def create_member(
         role=payload.role,
         is_active=True,
     )
-    db.add(member)
+     db.add(member)
+    db.flush()
+    record_audit(
+        db,
+        business_id=business_id,
+        user_id=current_user.id,
+        action="CREATE",
+        entity_type="MEMBER",
+        entity_id=member.id,
+        description=f"Menambahkan anggota {user.full_name} sebagai {member.role}",
+        after_data=_member_snapshot(member),
+    )
     db.commit()
     db.refresh(member)
     return _member_response(member)
@@ -116,6 +135,7 @@ def update_member(
     payload: MemberUpdate,
     db: Session = Depends(get_db),
     access=Depends(get_business_access),
+        current_user: User = Depends(get_current_user),
 ):
     member = (
         db.query(BusinessMember)
@@ -132,6 +152,7 @@ def update_member(
         raise HTTPException(
             status_code=400,
             detail="Peran pemilik bisnis tidak dapat diubah dari halaman ini",
+                before = _member_snapshot(member)
         )
 
     next_role = payload.role if payload.role is not None else member.role
@@ -146,8 +167,21 @@ def update_member(
                 detail="Bisnis harus memiliki minimal satu owner aktif",
             )
 
-    member.role = next_role
+       member.role = next_role
     member.is_active = next_active
+    after = _member_snapshot(member)
+    if after != before:
+        record_audit(
+            db,
+            business_id=business_id,
+            user_id=current_user.id,
+            action="UPDATE",
+            entity_type="MEMBER",
+            entity_id=member.id,
+            description=f"Mengubah anggota {member.user.full_name}",
+            before_data=before,
+            after_data=after,
+        )
     db.commit()
     db.refresh(member)
     return _member_response(member)
@@ -163,6 +197,7 @@ def deactivate_member(
     member_id: int,
     db: Session = Depends(get_db),
     access=Depends(get_business_access),
+    current_user: User = Depends(get_current_user),
 ):
     member = (
         db.query(BusinessMember)
@@ -185,7 +220,19 @@ def deactivate_member(
             detail="Bisnis harus memiliki minimal satu owner aktif",
         )
 
+        before = _member_snapshot(member)
     member.is_active = False
+    record_audit(
+        db,
+        business_id=business_id,
+        user_id=current_user.id,
+        action="DEACTIVATE",
+        entity_type="MEMBER",
+        entity_id=member.id,
+        description=f"Menonaktifkan anggota {member.user.full_name}",
+        before_data=before,
+        after_data=_member_snapshot(member),
+    )
     db.commit()
     db.refresh(member)
     return _member_response(member)
