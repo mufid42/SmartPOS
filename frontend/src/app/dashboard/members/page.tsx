@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Mail, Plus, Shield, UserCog, UserX, Users } from "lucide-react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { CheckCircle2, Mail, Plus, ScrollText, Shield, UserCog, UserX, Users } from "lucide-react";
 import { fetchApi, getBusinessId } from "@/lib/api";
-import { isOwnerRole, roleLabel, useSessionRole } from "@/lib/session";
+import { isManagerRole, isOwnerRole, roleLabel, useSessionRole } from "@/lib/session";
+import { ActivityLog } from "@/components/audit/activity-log";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -57,7 +59,7 @@ function MembersSkeleton() {
   );
 }
 
-export default function MembersPage() {
+function MembersPanel() {
   const businessId = getBusinessId();
   const sessionRole = useSessionRole();
   const canManage = isOwnerRole(sessionRole);
@@ -511,5 +513,79 @@ export default function MembersPage() {
         </p>
       </Modal>
     </div>
+  );
+}
+
+const TAB_ACTIVITY = "aktivitas";
+
+function MembersTabs() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const sessionRole = useSessionRole();
+  const canViewActivity = isManagerRole(sessionRole);
+  const activeTab = canViewActivity && searchParams.get("tab") === TAB_ACTIVITY ? "activity" : "members";
+
+  const selectTab = (tab: "members" | "activity") => {
+    router.replace(tab === "activity" ? `${pathname}?tab=${TAB_ACTIVITY}` : pathname, { scroll: false });
+  };
+
+  const tabClass = (selected: boolean) =>
+    cn(
+      "inline-flex min-h-10 cursor-pointer items-center gap-2 border-b-2 px-4 py-2 text-sm font-semibold transition",
+      selected
+        ? "border-indigo-500 text-indigo-700 dark:text-indigo-300"
+        : "border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+    );
+
+  return (
+    <div className="space-y-6">
+      {canViewActivity ? (
+        <div role="tablist" aria-label="Bagian anggota tim" className="flex gap-1 border-b border-slate-200 dark:border-slate-800">
+          <button
+            type="button"
+            role="tab"
+            id="tab-members"
+            aria-selected={activeTab === "members"}
+            aria-controls="panel-members"
+            onClick={() => selectTab("members")}
+            className={tabClass(activeTab === "members")}
+          >
+            <Users className="h-4 w-4" aria-hidden="true" />
+            Anggota
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="tab-activity"
+            aria-selected={activeTab === "activity"}
+            aria-controls="panel-activity"
+            onClick={() => selectTab("activity")}
+            className={tabClass(activeTab === "activity")}
+          >
+            <ScrollText className="h-4 w-4" aria-hidden="true" />
+            Riwayat Aktivitas
+          </button>
+        </div>
+      ) : null}
+
+      {activeTab === "activity" ? (
+        <div role="tabpanel" id="panel-activity" aria-labelledby="tab-activity">
+          <ActivityLog parent={{ label: "Anggota Tim", href: "/dashboard/members" }} />
+        </div>
+      ) : (
+        <div role="tabpanel" id="panel-members" aria-labelledby="tab-members">
+          <MembersPanel />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function MembersPage() {
+  return (
+    <Suspense fallback={null}>
+      <MembersTabs />
+    </Suspense>
   );
 }
