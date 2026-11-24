@@ -55,5 +55,6 @@ def update_business(
         )
     db.commit()
     db.refresh(business)
+    return business
 
 
